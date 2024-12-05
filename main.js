@@ -1,5 +1,5 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const { MongoClient, ObjectId } = require('mongodb');
 const dotenv = require('dotenv');
 
 dotenv.config();
@@ -9,89 +9,57 @@ const port = Number(process.env.PORT || 7000);
 
 app.use(express.json());
 
-const dbPath = process.env.DB_PATH || 'products.db';
+const mongoUri = process.env.MONGO_CONNECTION_STRING ;
+const dbName = 'vinbolaget';
+const collectionName = 'products';
 
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Failed to connect to the database:', err);
-  } else {
-    console.log('Connected to the SQLite database');
-    createProductsTable();
-  }
-});
+let db;
+let collection;
 
-async function createProductsTable() {
-  const query = `
-    CREATE TABLE IF NOT EXISTS products (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      description TEXT,
-      price REAL NOT NULL
-    )
-  `;
-  await runQuery(query);
-}
-
-/** Helper function to run SQL queries with promises. */
-function runQuery(query, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(query, params, function (err) {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(this);
-      }
-    });
+MongoClient.connect(mongoUri)
+  .then(client => {
+    console.log('Connected to MongoDB');
+    db = client.db(dbName);
+    collection = db.collection(collectionName);
+  })
+  .catch(error => {
+    console.error('Failed to connect to MongoDB:', error);
+    process.exit(1); 
   });
-}
 
-function fetchRows(query, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(query, params, (err, rows) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(rows);
-      }
-    });
-  });
-}
-
+// Routes
 app.post('/products', async (req, res) => {
   const { name, description, price } = req.body;
   try {
-    const result = await runQuery(
-      "INSERT INTO products (name, description, price) VALUES (?, ?, ?)",
-      [name, description, price]
-    );
-    res.status(201).json({ message: "Product created", productId: result.lastID });
+    const result = await collection.insertOne({ name, description, price });
+    res.status(201).json({ message: 'Product created', productId: result.insertedId });
   } catch (error) {
-    console.error("Error creating product:", error);
-    res.status(500).json({ error: "Failed to create product" });
+    console.error('Error creating product:', error);
+    res.status(500).json({ error: 'Failed to create product' });
   }
 });
 
 app.get('/products', async (req, res) => {
   try {
-    const products = await fetchRows("SELECT * FROM products");
+    const products = await collection.find({}).toArray();
     res.status(200).json(products);
   } catch (error) {
-    console.error("Error fetching products:", error);
-    res.status(500).json({ error: "Failed to fetch products" });
+    console.error('Error fetching products:', error);
+    res.status(500).json({ error: 'Failed to fetch products' });
   }
 });
 
 app.get('/products/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    const products = await fetchRows("SELECT * FROM products WHERE id = ?", [id]);
-    if (products.length === 0) {
-      return res.status(404).json({ error: "Product not found" });
+    const product = await collection.findOne({ _id: new ObjectId(id) });
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
     }
-    res.status(200).json(products[0]);
+    res.status(200).json(product);
   } catch (error) {
-    console.error("Error fetching product:", error);
-    res.status(500).json({ error: "Failed to fetch product" });
+    console.error('Error fetching product:', error);
+    res.status(500).json({ error: 'Failed to fetch product' });
   }
 });
 
@@ -99,31 +67,31 @@ app.put('/products/:id', async (req, res) => {
   const { id } = req.params;
   const { name, description, price } = req.body;
   try {
-    const result = await runQuery(
-      "UPDATE products SET name = ?, description = ?, price = ? WHERE id = ?",
-      [name, description, price, id]
+    const result = await collection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { name, description, price } }
     );
-    if (result.changes === 0) {
-      return res.status(404).json({ error: "Product not found" });
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'Product not found' });
     }
-    res.status(200).json({ message: "Product updated" });
+    res.status(200).json({ message: 'Product updated' });
   } catch (error) {
-    console.error("Error updating product:", error);
-    res.status(500).json({ error: "Failed to update product" });
+    console.error('Error updating product:', error);
+    res.status(500).json({ error: 'Failed to update product' });
   }
 });
 
 app.delete('/products/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    const result = await runQuery("DELETE FROM products WHERE id = ?", [id]);
-    if (result.changes === 0) {
-      return res.status(404).json({ error: "Product not found" });
+    const result = await collection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Product not found' });
     }
-    res.status(200).json({ message: "Product deleted" });
+    res.status(200).json({ message: 'Product deleted' });
   } catch (error) {
-    console.error("Error deleting product:", error);
-    res.status(500).json({ error: "Failed to delete product" });
+    console.error('Error deleting product:', error);
+    res.status(500).json({ error: 'Failed to delete product' });
   }
 });
 
